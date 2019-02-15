@@ -1,10 +1,10 @@
 package com.alibaba.otter.canal.client.adapter.rdb.support;
 
-import com.alibaba.otter.canal.client.adapter.support.Dml;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+
+import com.alibaba.otter.canal.client.adapter.support.Dml;
 
 public class SingleDml {
 
@@ -64,18 +64,27 @@ public class SingleDml {
     }
 
     public static List<SingleDml> dml2SingleDmls(Dml dml) {
-        int size = dml.getData().size();
-        List<SingleDml> singleDmls = new ArrayList<>(size);
-        for (int i = 0; i < size; i++) {
+        List<SingleDml> singleDmls = new ArrayList<>();
+        if (dml.getData() != null) {
+            int size = dml.getData().size();
+            for (int i = 0; i < size; i++) {
+                SingleDml singleDml = new SingleDml();
+                singleDml.setDestination(dml.getDestination());
+                singleDml.setDatabase(dml.getDatabase());
+                singleDml.setTable(dml.getTable());
+                singleDml.setType(dml.getType());
+                singleDml.setData(dml.getData().get(i));
+                if (dml.getOld() != null) {
+                    singleDml.setOld(dml.getOld().get(i));
+                }
+                singleDmls.add(singleDml);
+            }
+        } else if ("TRUNCATE".equalsIgnoreCase(dml.getType())) {
             SingleDml singleDml = new SingleDml();
             singleDml.setDestination(dml.getDestination());
             singleDml.setDatabase(dml.getDatabase());
             singleDml.setTable(dml.getTable());
             singleDml.setType(dml.getType());
-            singleDml.setData(dml.getData().get(i));
-            if (dml.getOld() != null) {
-                singleDml.setOld(dml.getOld().get(i));
-            }
             singleDmls.add(singleDml);
         }
         return singleDmls;

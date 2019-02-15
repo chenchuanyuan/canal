@@ -1,10 +1,12 @@
-package com.alibaba.otter.canal.client.rocketmq;
+package com.alibaba.otter.canal.client.running.rocketmq;
 
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import com.alibaba.otter.canal.client.rocketmq.ConsumerBatchMessage;
+import com.alibaba.otter.canal.client.rocketmq.RocketMQCanalConnector;
 import org.apache.commons.lang.StringUtils;
 import org.apache.rocketmq.client.consumer.DefaultMQPushConsumer;
 import org.apache.rocketmq.client.consumer.listener.ConsumeOrderlyContext;
@@ -38,9 +40,9 @@ import com.google.common.collect.Lists;
  * 
  * @since 1.1.1
  */
-public class RocketMQCanalConnector implements CanalMQConnector {
+public class RocketMQCanalConnectorEx implements CanalMQConnector {
 
-    private static final Logger                 logger              = LoggerFactory.getLogger(RocketMQCanalConnector.class);
+    private static final Logger                 logger              = LoggerFactory.getLogger(RocketMQCanalConnectorEx.class);
 
     private String                              nameServer;
     private String                              topic;
@@ -55,7 +57,7 @@ public class RocketMQCanalConnector implements CanalMQConnector {
     private String                              accessKey;
     private String                              secretKey;
 
-    public RocketMQCanalConnector(String nameServer, String topic, String groupName, Integer batchSize,
+    public RocketMQCanalConnectorEx(String nameServer, String topic, String groupName, Integer batchSize,
                                   boolean flatMessage){
         this.nameServer = nameServer;
         this.topic = topic;
@@ -65,7 +67,7 @@ public class RocketMQCanalConnector implements CanalMQConnector {
         this.batchSize = batchSize;
     }
 
-    public RocketMQCanalConnector(String nameServer, String topic, String groupName, String accessKey,
+    public RocketMQCanalConnectorEx(String nameServer, String topic, String groupName, String accessKey,
                                   String secretKey, Integer batchSize, boolean flatMessage){
         this(nameServer, topic, groupName, batchSize, flatMessage);
         this.accessKey = accessKey;
@@ -82,6 +84,7 @@ public class RocketMQCanalConnector implements CanalMQConnector {
             rpcHook = new ClientRPCHook(sessionCredentials);
         }
         rocketMQConsumer = new DefaultMQPushConsumer(groupName, rpcHook, new AllocateMessageQueueAveragely());
+        rocketMQConsumer.setConsumeMessageBatchMaxSize(20);
         rocketMQConsumer.setVipChannelEnabled(false);
         if (!StringUtils.isBlank(nameServer)) {
             rocketMQConsumer.setNamesrvAddr(nameServer);
@@ -108,7 +111,10 @@ public class RocketMQCanalConnector implements CanalMQConnector {
             if (rocketMQConsumer == null) {
                 this.connect();
             }
-            rocketMQConsumer.subscribe(this.topic, "*");
+            String[] topics = this.topic.split(",");
+            for(String top : topics) {
+                rocketMQConsumer.subscribe(top, "*");
+            }
             rocketMQConsumer.registerMessageListener(new MessageListenerOrderly() {
 
                 @Override

@@ -1,14 +1,16 @@
 package com.alibaba.otter.canal.client.running.kafka;
 
-import com.alibaba.otter.canal.client.kafka.KafkaOffsetCanalConnector;
-import com.alibaba.otter.canal.client.kafka.protocol.KafkaMessage;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+
+import com.alibaba.otter.canal.client.kafka.protocol.KafkaFlatMessage;
 import org.apache.kafka.common.errors.WakeupException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.Assert;
 
-import java.util.List;
-import java.util.concurrent.TimeUnit;
+import com.alibaba.otter.canal.client.kafka.KafkaOffsetCanalConnector;
+import com.alibaba.otter.canal.client.kafka.protocol.KafkaMessage;
 
 /**
  * KafkaOffsetCanalConnector 使用示例
@@ -36,7 +38,7 @@ public class CanalKafkaOffsetClientExample {
     };
 
     public CanalKafkaOffsetClientExample(String servers, String topic, Integer partition, String groupId) {
-        connector = new KafkaOffsetCanalConnector(servers, topic, partition, groupId, false);
+        connector = new KafkaOffsetCanalConnector(servers, topic, partition, groupId, true);
     }
 
     public static void main(String[] args) {
@@ -99,8 +101,13 @@ public class CanalKafkaOffsetClientExample {
     }
 
     private void process() {
-        while (!running)
-            ;
+        while (!running) {
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+            }
+        }
+
         while (running) {
             try {
                 // 修改 AutoOffsetReset 的值，默认（earliest）
@@ -117,18 +124,18 @@ public class CanalKafkaOffsetClientExample {
                         if (errorCount > 2) {
                             Thread.sleep((errorCount - 2) * 1000 * 30);
                         }
+                        List<KafkaFlatMessage> messages = connector.getFlatListWithoutAck(100L, TimeUnit.MILLISECONDS, offset); // 获取message
 
-                        List<KafkaMessage> messages = connector.getListWithoutAck(100L, TimeUnit.MILLISECONDS, offset); // 获取message
                         if (messages == null) {
                             continue;
                         }
-                        for (KafkaMessage message : messages) {
+                        for (KafkaFlatMessage message : messages) {
                             long batchId = message.getId();
-                            int size = message.getEntries().size();
-
-                            if (batchId == -1 || size == 0) {
-                                continue;
-                            }
+//                            int size = message.getEntries().size();
+//
+//                            if (batchId == -1 || size == 0) {
+//                                continue;
+//                            }
 
                             // 记录第一条消息的offset，用于处理数据异常时重新从此位置获取消息
                             if (offset < 0) {

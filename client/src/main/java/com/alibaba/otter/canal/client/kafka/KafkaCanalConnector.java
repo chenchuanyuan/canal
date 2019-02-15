@@ -40,6 +40,7 @@ public class KafkaCanalConnector implements CanalMQConnector {
     protected boolean                        flatMessage;
 
     private Map<Integer, Long>               currentOffsets = new HashMap<>();
+    private ConsumerRecords<String, String> records;
 
     public KafkaCanalConnector(String servers, String topic, Integer partition, String groupId, Integer batchSize,
                                boolean flatMessage){
@@ -127,7 +128,11 @@ public class KafkaCanalConnector implements CanalMQConnector {
                 kafkaConsumer.subscribe(Collections.singletonList(topic));
             }
             if (kafkaConsumer2 != null) {
-                kafkaConsumer2.subscribe(Collections.singletonList(topic));
+                String[] topics = topic.split(",");
+
+
+                kafkaConsumer2.subscribe(Arrays.asList(topics));
+
             }
         } else {
             TopicPartition topicPartition = new TopicPartition(topic, partition);
@@ -223,9 +228,21 @@ public class KafkaCanalConnector implements CanalMQConnector {
         for (TopicPartition topicPartition : records.partitions()) {
             currentOffsets.put(topicPartition.partition(), kafkaConsumer2.position(topicPartition));
         }
+        this.records = records;
 
         if (!records.isEmpty()) {
             List<FlatMessage> flatMessages = new ArrayList<>();
+////            kafkaConsumer2.commitSync();
+//            for(topic: topics) {
+//                records.records(topic)
+//                        oncall()
+//            }
+
+            flatMessages =getFlatListWithoutAck(topic,records);
+            rollback("canaltest_person",records);
+
+//            resetTopicOffSet("canaltest_person", records);
+
             for (ConsumerRecord<String, String> record : records) {
                 String flatMessageJson = record.value();
                 FlatMessage flatMessage = JSON.parseObject(flatMessageJson, FlatMessage.class);
@@ -236,6 +253,29 @@ public class KafkaCanalConnector implements CanalMQConnector {
         }
         return Lists.newArrayList();
     }
+
+    public List<FlatMessage> getFlatListWithoutAck(String topic,ConsumerRecords<String, String> records) throws CanalClientException {
+        List<FlatMessage> flatMessages = new ArrayList<>();
+        Iterable<ConsumerRecord<String, String>> list = records.records(topic);
+        for (ConsumerRecord<String, String> record : list) {
+            String flatMessageJson = record.value();
+            FlatMessage flatMessage = JSON.parseObject(flatMessageJson, FlatMessage.class);
+            flatMessages.add(flatMessage);
+        }
+
+        return flatMessages;
+    }
+
+    public void rollback(String topic,ConsumerRecords<String, String> records) {
+        if (kafkaConsumer2 != null) {
+            for (TopicPartition topicPartition : records.partitions()) {
+                if(Objects.equals(topic,topicPartition.topic())){
+                    kafkaConsumer2.seek(new TopicPartition(topic, topicPartition.partition()), kafkaConsumer2.position(topicPartition) - 1);
+                }
+            }
+        }
+    }
+
 
     @Override
     public void rollback() {
@@ -319,6 +359,14 @@ public class KafkaCanalConnector implements CanalMQConnector {
         long t = unit.toMillis(timeout);
         properties.put("request.timeout.ms", String.valueOf(t + 60000));
         properties.put("session.timeout.ms", String.valueOf(t));
+    }
+
+
+    public void resetTopicOffSet(String topic, ConsumerRecords<String, String> records) {
+
+        Iterable<ConsumerRecord<String, String>> a = records.records(topic);
+
+
     }
 
 }

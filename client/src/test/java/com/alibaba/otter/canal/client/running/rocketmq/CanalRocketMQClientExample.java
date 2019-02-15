@@ -3,6 +3,8 @@ package com.alibaba.otter.canal.client.running.rocketmq;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import com.alibaba.otter.canal.protocol.FlatMessage;
+import com.alibaba.otter.canal.protocol.Message;
 import org.apache.kafka.common.errors.WakeupException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,7 +12,7 @@ import org.springframework.util.Assert;
 
 import com.alibaba.otter.canal.client.rocketmq.RocketMQCanalConnector;
 import com.alibaba.otter.canal.client.running.kafka.AbstractKafkaTest;
-import com.alibaba.otter.canal.protocol.Message;
+
 
 /**
  * Kafka client example
@@ -22,7 +24,7 @@ public class CanalRocketMQClientExample extends AbstractRocektMQTest {
 
     protected final static Logger           logger  = LoggerFactory.getLogger(CanalRocketMQClientExample.class);
 
-    private RocketMQCanalConnector          connector;
+    private RocketMQCanalConnectorEx          connector;
 
     private static volatile boolean         running = false;
 
@@ -36,7 +38,9 @@ public class CanalRocketMQClientExample extends AbstractRocektMQTest {
                                                     };
 
     public CanalRocketMQClientExample(String nameServers, String topic, String groupId){
-        connector = new RocketMQCanalConnector(nameServers, topic, groupId, false);
+        connector = new RocketMQCanalConnectorEx(nameServers, topic, groupId, 500, true);
+
+
     }
 
     public static void main(String[] args) {
@@ -97,27 +101,33 @@ public class CanalRocketMQClientExample extends AbstractRocektMQTest {
     }
 
     private void process() {
-        while (!running)
-            ;
+        while (!running) {
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+            }
+        }
+
         while (running) {
             try {
                 connector.connect();
                 connector.subscribe();
                 while (running) {
-                    List<Message> messages = connector.getListWithoutAck(100L, TimeUnit.MILLISECONDS); // 获取message
-                    for (Message message : messages) {
+                    List<FlatMessage> messages = connector.getFlatListWithoutAck(100L, TimeUnit.MILLISECONDS); // 获取message
+                    for (FlatMessage message : messages) {
                         long batchId = message.getId();
-                        int size = message.getEntries().size();
-                        if (batchId == -1 || size == 0) {
-                            // try {
-                            // Thread.sleep(1000);
-                            // } catch (InterruptedException e) {
-                            // }
-                        } else {
-                            // printSummary(message, batchId, size);
-                            // printEntry(message.getEntries());
-                            logger.info(message.toString());
-                        }
+
+//                        int size = message.getEntries().size();
+//                        if (batchId == -1 || size == 0) {
+//                            // try {
+//                            // Thread.sleep(1000);
+//                            // } catch (InterruptedException e) {
+//                            // }
+//                        } else {
+//                            // printSummary(message, batchId, size);
+//                            // printEntry(message.getEntries());
+//                            logger.info(message.toString());
+//                        }
                     }
 
                     connector.ack(); // 提交确认

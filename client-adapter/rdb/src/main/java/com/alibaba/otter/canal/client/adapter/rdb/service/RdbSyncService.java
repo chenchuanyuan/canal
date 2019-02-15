@@ -7,11 +7,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.*;
 import java.util.function.Function;
 
 import javax.sql.DataSource;
@@ -77,10 +73,10 @@ public class RdbSyncService {
             this.executorThreads = new ExecutorService[this.threads];
             for (int i = 0; i < this.threads; i++) {
                 dmlsPartition[i] = new ArrayList<>();
-                batchExecutors[i] = new BatchExecutor(dataSource.getConnection());
+                batchExecutors[i] = new BatchExecutor(dataSource);
                 executorThreads[i] = Executors.newSingleThreadExecutor();
             }
-        } catch (SQLException e) {
+        } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
@@ -92,40 +88,47 @@ public class RdbSyncService {
      * @param function 回调方法
      */
     public void sync(List<Dml> dmls, Function<Dml, Boolean> function) {
-        boolean toExecute = false;
-        for (Dml dml : dmls) {
-            if (!toExecute) {
-                toExecute = function.apply(dml);
-            } else {
-                function.apply(dml);
+        try {
+            boolean toExecute = false;
+            for (Dml dml : dmls) {
+                if (!toExecute) {
+                    toExecute = function.apply(dml);
+                } else {
+                    function.apply(dml);
+                }
             }
-        }
-        if (toExecute) {
-            List<Future> futures = new ArrayList<>();
-            for (int i = 0; i < threads; i++) {
-                int j = i;
-                futures.add(executorThreads[i].submit(() -> {
+            if (toExecute) {
+                List<Future> futures = new ArrayList<>();
+                for (int i = 0; i < threads; i++) {
+                    int j = i;
+                    futures.add(executorThreads[i].submit(() -> {
+                        try {
+                            dmlsPartition[j]
+                                .forEach(syncItem -> sync(batchExecutors[j], syncItem.config, syncItem.singleDml));
+                            dmlsPartition[j].clear();
+                            batchExecutors[j].commit();
+                            return true;
+                        } catch (Throwable e) {
+                            batchExecutors[j].rollback();
+                            throw new RuntimeException(e);
+                        }
+                    }));
+                }
+
+                futures.forEach(future -> {
                     try {
-                        dmlsPartition[j].forEach(syncItem -> sync(batchExecutors[j],
-                            syncItem.config,
-                            syncItem.singleDml));
-                        dmlsPartition[j].clear();
-                        batchExecutors[j].commit();
-                        return true;
-                    } catch (Throwable e) {
-                        batchExecutors[j].rollback();
+                        future.get();
+                    } catch (ExecutionException | InterruptedException e) {
                         throw new RuntimeException(e);
                     }
-                }));
+                });
             }
-
-            futures.forEach(future -> {
-                try {
-                    future.get();
-                } catch (ExecutionException | InterruptedException e) {
-                    throw new RuntimeException(e);
+        } finally {
+            for (BatchExecutor batchExecutor : batchExecutors) {
+                if (batchExecutor != null) {
+                    batchExecutor.close();
                 }
-            });
+            }
         }
     }
 
@@ -139,41 +142,41 @@ public class RdbSyncService {
         sync(dmls, dml -> {
             if (dml.getIsDdl() != null && dml.getIsDdl() && StringUtils.isNotEmpty(dml.getSql())) {
                 // DDL
-            columnsTypeCache.remove(dml.getDestination() + "." + dml.getDatabase() + "." + dml.getTable());
-            return false;
-        } else {
-            // DML
-            String destination = StringUtils.trimToEmpty(dml.getDestination());
-            String database = dml.getDatabase();
-            String table = dml.getTable();
-            Map<String, MappingConfig> configMap = mappingConfig.get(destination + "." + database + "." + table);
-
-            if (configMap == null) {
+                columnsTypeCache.remove(dml.getDestination() + "." + dml.getDatabase() + "." + dml.getTable());
                 return false;
-            }
+            } else {
+                // DML
+                String destination = StringUtils.trimToEmpty(dml.getDestination());
+                String database = dml.getDatabase();
+                String table = dml.getTable();
+                Map<String, MappingConfig> configMap = mappingConfig.get(destination + "." + database + "." + table);
 
-            boolean executed = false;
-            for (MappingConfig config : configMap.values()) {
-                if (config.getConcurrent()) {
-                    List<SingleDml> singleDmls = SingleDml.dml2SingleDmls(dml);
-                    singleDmls.forEach(singleDml -> {
-                        int hash = pkHash(config.getDbMapping(), singleDml.getData());
-                        SyncItem syncItem = new SyncItem(config, singleDml);
-                        dmlsPartition[hash].add(syncItem);
-                    });
-                } else {
-                    int hash = 0;
-                    List<SingleDml> singleDmls = SingleDml.dml2SingleDmls(dml);
-                    singleDmls.forEach(singleDml -> {
-                        SyncItem syncItem = new SyncItem(config, singleDml);
-                        dmlsPartition[hash].add(syncItem);
-                    });
+                if (configMap == null) {
+                    return false;
                 }
-                executed = true;
+
+                boolean executed = false;
+                for (MappingConfig config : configMap.values()) {
+                    if (config.getConcurrent()) {
+                        List<SingleDml> singleDmls = SingleDml.dml2SingleDmls(dml);
+                        singleDmls.forEach(singleDml -> {
+                            int hash = pkHash(config.getDbMapping(), singleDml.getData());
+                            SyncItem syncItem = new SyncItem(config, singleDml);
+                            dmlsPartition[hash].add(syncItem);
+                        });
+                    } else {
+                        int hash = 0;
+                        List<SingleDml> singleDmls = SingleDml.dml2SingleDmls(dml);
+                        singleDmls.forEach(singleDml -> {
+                            SyncItem syncItem = new SyncItem(config, singleDml);
+                            dmlsPartition[hash].add(syncItem);
+                        });
+                    }
+                    executed = true;
+                }
+                return executed;
             }
-            return executed;
-        }
-    }   );
+        });
     }
 
     /**
@@ -193,6 +196,8 @@ public class RdbSyncService {
                     update(batchExecutor, config, dml);
                 } else if (type != null && type.equalsIgnoreCase("DELETE")) {
                     delete(batchExecutor, config, dml);
+                } else if (type != null && type.equalsIgnoreCase("TRUNCATE")) {
+                    truncate(batchExecutor, config);
                 }
                 if (logger.isDebugEnabled()) {
                     logger.debug("DML: {}", JSON.toJSONString(dml, SerializerFeature.WriteMapNullValue));
@@ -293,15 +298,16 @@ public class RdbSyncService {
         StringBuilder updateSql = new StringBuilder();
         updateSql.append("UPDATE ").append(SyncUtil.getDbTableName(dbMapping)).append(" SET ");
         List<Map<String, ?>> values = new ArrayList<>();
+        boolean hasMatched = false;
         for (String srcColumnName : old.keySet()) {
             List<String> targetColumnNames = new ArrayList<>();
             columnsMap.forEach((targetColumn, srcColumn) -> {
-                if (srcColumnName.toLowerCase().equals(srcColumn)) {
+                if (srcColumnName.toLowerCase().equals(srcColumn.toLowerCase())) {
                     targetColumnNames.add(targetColumn);
                 }
             });
             if (!targetColumnNames.isEmpty()) {
-
+                hasMatched = true;
                 for (String targetColumnName : targetColumnNames) {
                     updateSql.append(targetColumnName).append("=?, ");
                     Integer type = ctype.get(Util.cleanColumn(targetColumnName).toLowerCase());
@@ -311,6 +317,10 @@ public class RdbSyncService {
                     BatchExecutor.setValue(values, type, data.get(srcColumnName));
                 }
             }
+        }
+        if (!hasMatched) {
+            logger.warn("Did not matched any columns to update ");
+            return;
         }
         int len = updateSql.length();
         updateSql.delete(len - 2, len).append(" WHERE ");
@@ -348,6 +358,21 @@ public class RdbSyncService {
         batchExecutor.execute(sql.toString(), values);
         if (logger.isTraceEnabled()) {
             logger.trace("Delete from target table, sql: {}", sql);
+        }
+    }
+
+    /**
+     * truncate操作
+     *
+     * @param config
+     */
+    private void truncate(BatchExecutor batchExecutor, MappingConfig config) throws SQLException {
+        DbMapping dbMapping = config.getDbMapping();
+        StringBuilder sql = new StringBuilder();
+        sql.append("TRUNCATE TABLE ").append(SyncUtil.getDbTableName(dbMapping));
+        batchExecutor.execute(sql.toString(), new ArrayList<>());
+        if (logger.isTraceEnabled()) {
+            logger.trace("Truncate target table, sql: {}", sql);
         }
     }
 
@@ -447,10 +472,10 @@ public class RdbSyncService {
             if (srcColumnName == null) {
                 srcColumnName = Util.cleanColumn(targetColumnName);
             }
-            Object value;
+            Object value = null;
             if (o != null && o.containsKey(srcColumnName)) {
                 value = o.get(srcColumnName);
-            } else {
+            } else if (d != null) {
                 value = d.get(srcColumnName);
             }
             if (value != null) {
@@ -463,7 +488,6 @@ public class RdbSyncService {
 
     public void close() {
         for (int i = 0; i < threads; i++) {
-            batchExecutors[i].close();
             executorThreads[i].shutdown();
         }
     }

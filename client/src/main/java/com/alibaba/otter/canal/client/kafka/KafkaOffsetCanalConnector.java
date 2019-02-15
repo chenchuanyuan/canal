@@ -14,6 +14,7 @@ import org.apache.kafka.common.TopicPartition;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -87,6 +88,11 @@ public class KafkaOffsetCanalConnector extends KafkaCanalConnector {
         ConsumerRecords<String, String> records = kafkaConsumer2.poll(unit.toMillis(timeout));
         if (!records.isEmpty()) {
             List<KafkaFlatMessage> flatMessages = new ArrayList<>();
+
+
+            getFlatListWithoutAck("canaltest_person",records);
+            rollback("canaltest_person",records);
+
             for (ConsumerRecord<String, String> record : records) {
                 String flatMessageJson = record.value();
                 FlatMessage flatMessage = JSON.parseObject(flatMessageJson, FlatMessage.class);
@@ -109,4 +115,7 @@ public class KafkaOffsetCanalConnector extends KafkaCanalConnector {
             properties.put("auto.offset.reset", value);
         }
     }
+
+
+
 }
